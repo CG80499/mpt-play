@@ -190,13 +190,13 @@ def main():
   stop = StopOnTokens(stop_token_ids)
   stopping_criteria=StoppingCriteriaList([stop])
 
-  system_prompt = """- You are a helpful assistant chatbot trained by MosaicML.
-- You answer questions.
-- You are excited to be able to help the user, but will refuse to do anything that could be considered harmful to the user.
-- You are more than just an information source, you are also able to write poetry, short stories, and make jokes.
+  system_prompt = """- You are an expert therapist.
+- The user is your patient, and you are trying to help them.
+- Be empathetic, and try to help them with their problems.
+- You can ask them questions, and they will answer.
 """
 
-  history: List[Message] = [Message(Participant.System, system_prompt)] if misc_args.use_system_prompt else []
+  history: List[Message] = [Message(Participant.System, system_prompt)]
 
   reset_ansi='\x1b[0m'
   blue_ansi='\x1b[31;34m'
@@ -204,56 +204,69 @@ def main():
   purple_ansi='\x1b[31;35m'
   prompt=f'{purple_ansi}$ '
 
-  first = True
+  user_input = ''
+
   while True:
-    try:
-      user_input = input(f'{blue_ansi}Type a message to begin the conversation…{reset_ansi}\n{prompt}' if first else prompt)
-    except KeyboardInterrupt:
-      sys.exit(0)
-    print(reset_ansi, end='')
 
-    first = False
-    history += [Message(Participant.User, user_input)]
-  
-    history_str: str = ''.join([
-      f"<|im_start|>{participant.value}\n{message}<|im_end|>"
-      for participant, message in history
-    ])
-    chat_to_complete = f"{history_str}<|im_start|>{Participant.Assistant.value}\n"
+    first = True
+    while True:
+      try:
+        user_input = input(f'{blue_ansi}Type a message to begin the conversation…{reset_ansi}\n{prompt}' if first else prompt)
+      except KeyboardInterrupt:
+        sys.exit(0)
+      print(reset_ansi, end='')
 
-    tokenized_prompts: TokenizerOutput = tokenizer([chat_to_complete], return_tensors='pt', truncation=True)
-    tokenized_prompts: TokenizerOutput = tokenized_prompts.to(model.device)
+      first = False
+      history += [Message(Participant.User, user_input)]
     
-    print(green_ansi, end='', flush=True)
+      history_str: str = ''.join([
+        f"<|im_start|>{participant.value}\n{message}<|im_end|>"
+        for participant, message in history
+      ])
+      chat_to_complete = f"{history_str}<|im_start|>{Participant.Assistant.value}\n"
 
-    response = ''
-    def on_text(message: str, stream_end = False):
-      nonlocal response
-      response += message
-      print(message, end='', flush=True)
+      tokenized_prompts: TokenizerOutput = tokenizer([chat_to_complete], return_tensors='pt', truncation=True)
+      tokenized_prompts: TokenizerOutput = tokenized_prompts.to(model.device)
+      
+      print(green_ansi, end='', flush=True)
 
-    streamer = CallbackTextIteratorStreamer(tokenizer, callback=on_text, skip_prompt=True, skip_special_tokens=True)
+      response = ''
+      def on_text(message: str, stream_end = False):
+        nonlocal response
+        response += message
+        print(message, end='', flush=True)
 
-    try:
-      prediction: LongTensor = model.generate(
-        **tokenized_prompts,
-        generation_config=generation_config,
-        do_sample=generation_config.temperature > 0.,
-        stopping_criteria=stopping_criteria,
-        streamer=streamer,
-      )
-      # if you wanted to see the result, you can do so like this:
-      #   decode: List[str] = tokenizer.batch_decode(prediction, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-      # but we're already streaming it to the console via our callback
-    except KeyboardInterrupt:
-      pass
+      streamer = CallbackTextIteratorStreamer(tokenizer, callback=on_text, skip_prompt=True, skip_special_tokens=True)
 
-    # reset ANSI control sequence (plus line break)
-    print(reset_ansi)
+      try:
+        prediction: LongTensor = model.generate(
+          **tokenized_prompts,
+          generation_config=generation_config,
+          do_sample=generation_config.temperature > 0.,
+          stopping_criteria=stopping_criteria,
+          streamer=streamer,
+        )
+        # if you wanted to see the result, you can do so like this:
+        #   decode: List[str] = tokenizer.batch_decode(prediction, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        # but we're already streaming it to the console via our callback
+      except KeyboardInterrupt:
+        pass
 
-    # TODO: cull older history, otherwise context will just keep growing larger.
-    #       ideally by measuring each message to work out the smallest cull possible.
-    history += [Message(Participant.Assistant, response)]
+      # reset ANSI control sequence (plus line break)
+      print(reset_ansi)
+
+      # TODO: cull older history, otherwise context will just keep growing larger.
+      #       ideally by measuring each message to work out the smallest cull possible.
+      history += [Message(Participant.Assistant, response)]
+
+      if user_input == "reset" or user_input == "quit":
+        history = [Message(Participant.System, system_prompt)]
+        first = True
+        print(f"{green_ansi}Resetting conversation…{reset_ansi}")
+        break
+
+    if user_input == "quit":
+      break
 
 if __name__ == "__main__":
   main()
